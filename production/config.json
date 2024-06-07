@@ -1,0 +1,38 @@
+{
+    "kafka_address": "localhost:29092",
+    "path": "/usr/share/bcc/tools/",
+    "tools": [
+        {
+            "cmd": ["gethostlatency"],
+            "output_description": "TIME      PID     COMM                  LATms HOST",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["tcpconnect"],
+            "output_description": "PID     COMM         IP SADDR            DADDR            DPORT ",
+            "noise": [
+                "Tracing connect ... Hit Ctrl-C to end"
+            ],
+            "additional": []
+        },
+        {
+            "cmd": ["tcpconnlat"],
+            "output_description": "PID     COMM         IP SADDR            DADDR            DPORT LAT(ms)",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["tcplife"],
+            "output_description": "PID   COMM       LADDR           LPORT RADDR           RPORT TX_KB RX_KB MS",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["netqtop", "-n", "wlp0s20f3", "-i", "5", "-t"],
+            "output_description": " QueueID    avg_size   [0, 64)    [64, 512)  [512, 2K)  [2K, 16K)  [16K, 64K) BPS        PPS        ",
+            "noise": [],
+            "additional": []
+        }
+    ]
+}
