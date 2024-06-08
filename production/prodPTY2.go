@@ -1,70 +1,3 @@
-
-	// package main
-
-	// import (
-	// 	"io"
-	// 	"log"
-	// 	"os"
-	// 	"os/exec"
-	// 	"syscall"
-	// 	// "golang.org/x/sys/unix"
-	// )
-	
-	// func main() {
-	// 	// Command to run the Python script
-	// 	cmd := exec.Command("sudo python /usr/share/bcc/tools/tcplife")
-	
-	// 	// Create a pseudo-terminal
-	// 	masterFD, slaveFD, err := openPty()
-	// 	if err != nil {
-	// 		log.Fatalf("Failed to open pseudo terminal: %v", err)
-	// 	}
-	// 	defer masterFD.Close()
-	// 	defer slaveFD.Close()
-	
-	// 	// Set the slave file descriptor as the standard input, output, and error for the command
-	// 	cmd.Stdin = slaveFD
-	// 	cmd.Stdout = slaveFD
-	// 	cmd.Stderr = slaveFD
-	
-	// 	// Start the command
-	// 	err = cmd.Start()
-	// 	if err != nil {
-	// 		log.Fatalf("Failed to start command: %v", err)
-	// 	}
-	
-	// 	// Close the slave file descriptor in the parent process
-	// 	slaveFD.Close()
-	
-	// 	// Create a goroutine to copy the master file descriptor output to the standard output
-	// 	go func() {
-	// 		_, err := io.Copy(os.Stdout, masterFD)
-	// 		if err != nil {
-	// 			log.Fatalf("Failed to read from master file descriptor: %v", err)
-	// 		}
-	// 	}()
-	
-	// 	// Wait for the command to finish
-	// 	err = cmd.Wait()
-	// 	if err != nil {
-	// 		log.Fatalf("Command finished with error: %v", err)
-	// 	}
-	// }
-	
-	// func openPty() (*os.File, *os.File, error) {
-	// 	// Use syscall to open a pseudo-terminal
-	// 	masterFD, slaveFD, err := syscall.Openpty(nil, nil)
-	// 	if err != nil {
-	// 		return nil, nil, err
-	// 	}
-	
-	// 	// Convert the file descriptors to os.File
-	// 	master := os.NewFile(uintptr(masterFD), "/dev/ptmx")
-	// 	slave := os.NewFile(uintptr(slaveFD), "/dev/pts")
-	
-	// 	return master, slave, nil
-	// }
-
 package main
 
 import (
@@ -73,63 +6,203 @@ import (
     "os/exec"
     "github.com/creack/pty"
     "golang.org/x/term"
+    "bufio"
+    "github.com/segmentio/kafka-go"
+    "context"
+    "time"
+    "log"
+    "sync"
+    // "os"
+    "io/ioutil"
+    "encoding/json"
+	"strings"
 )
 
-func main() {
-    // Define the command to be run in the pseudo-terminal
-    command := "sudo python /usr/share/bcc/tools/tcplife" // Replace this with your actual command
-	// cmd := exec.Command("sudo python /usr/share/bcc/tools/tcplife")
-    // Create a pseudo-terminal
+const output_type_basic = "basic"
+const output_type_specific = "specific"
+
+type Tool struct {
+    Cmd []string `json:"cmd"`
+    Output_description string `json:"output_description"`
+	Output_type string `json:"output_type"`
+    Noise []string `json:"noise"`
+    Additional []string `json:"additional"`
+}
+
+type Config struct {
+    Kafka_address string `json:"kafka_address"`
+    Path string `json:"path"`
+    Tools []Tool `json:"tools"`
+}
+
+var wg = sync.WaitGroup{}
+
+func runCommand(tool string, topic string, config Config, cmdIdx int){
+	defer wg.Done()
+
+	command := "sudo python /usr/share/bcc/tools/"+tool
+	if len(config.Tools[cmdIdx].Cmd) != 1 {
+		command = "sudo python /usr/share/bcc/tools/"+tool+" "+strings.Join(config.Tools[cmdIdx].Cmd[1:], " ")
+	}
+	amtOfColumns := len(strings.Fields(config.Tools[cmdIdx].Output_description))
+	fmt.Println("Running command: ", command, " and ", amtOfColumns)
+
 	cmd := exec.Command("bash", "-c",command)
-    ptmx, err := pty.Start(cmd)
+
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create stderr pipe: %v\n", err)
+		return
+	}
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to start command: %v\n", err)
+		return
+	}
+	defer ptmx.Close()
+
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to set terminal to raw mode: %v\n", err)
+		return
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	w := &kafka.Writer{
+		Addr:     kafka.TCP(config.Kafka_address),
+		Topic:    topic,
+		Balancer: &kafka.LeastBytes{},
+	}
+
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			n, err := ptmx.Read(buf)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to read from pseudo-terminal: %v\n\r", err)
+				break
+			}
+			output := string(buf[:n])
+			output2 := strings.Split(output, "\n")
+			for _, line := range output2 {
+
+				text := strings.Trim(line, " \t\n\r\f\v")
+				if text == "" {
+					continue
+				}
+
+				fmt.Fprintf(os.Stdout, "%s\n\r", text)
+
+				if text == config.Tools[cmdIdx].Output_description {
+					fmt.Fprintf(os.Stdout, "Skipping header\n\r")
+					continue
+				}
+
+				if len(config.Tools[cmdIdx].Noise) != 0 && text == config.Tools[cmdIdx].Noise[0] {
+					fmt.Fprintf(os.Stdout, "Skipping noise\n\r")
+					continue 
+				}
+
+				fields := strings.Fields(text)
+				fmt.Fprintf(os.Stdout, "field[0]: %s\n\r", fields[0])
+				if fields[0] == "[sudo]"{
+					continue
+				}
+
+				if config.Tools[cmdIdx].Output_type == output_type_basic {
+					amtOfColumnsInText := len(fields)
+					fmt.Fprintf(os.Stdout, "amtOfColumnsInText: %d\n\r", amtOfColumnsInText)
+					if amtOfColumns != amtOfColumnsInText {
+						continue
+					}
+				}
+
+				dt := time.Now().Format("2006-01-02 15:04:05")
+
+				err2 := w.WriteMessages(context.Background(),
+					kafka.Message{
+						Key:   []byte(dt),
+						Value: []byte(text),
+					},
+				)
+
+				if err2 != nil {
+					log.Fatal("failed to write messages:", err2)
+				}
+			}
+		}
+	}()
+
+	go func() {
+		scanner := bufio.NewScanner(stderrPipe)
+		for scanner.Scan() {
+			line := scanner.Text()
+			fmt.Fprintf(os.Stderr, "stderr: %s\n\r", line)
+		}
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading from stderr: %v\n\r", err)
+		}
+	}()
+
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", err)
+				break
+			}
+			if n > 0 {
+				_, err := ptmx.Write(buf[:n])
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to write to pseudo-terminal: %v\n", err)
+					break
+				}
+			}
+		}
+	}()
+
+	if err := cmd.Wait(); err != nil {
+		fmt.Fprintf(os.Stderr, "Command exited with error: %v\n\r", err)
+	}
+
+}
+
+func main() {
+    jsonFile, err := os.Open("config.json")
     if err != nil {
-        fmt.Fprintf(os.Stderr, "Failed to start command: %v\n", err)
-        return
+        fmt.Println(err)
     }
-    defer ptmx.Close()
+    defer jsonFile.Close()
 
-    // Set the terminal to raw mode
-    oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-    if err != nil {
-        fmt.Fprintf(os.Stderr, "Failed to set terminal to raw mode: %v\n", err)
-        return
-    }
-    defer term.Restore(int(os.Stdin.Fd()), oldState)
+    bytes, _ := ioutil.ReadAll(jsonFile)
 
-    // Read and print the output from the pseudo-terminal
-    go func() {
-        buf := make([]byte, 1024)
-        for {
-            n, err := ptmx.Read(buf)
-            if err != nil {
-                fmt.Fprintf(os.Stderr, "Failed to read from pseudo-terminal: %v\n", err)
-                break
-            }
-            fmt.Print(string(buf[:n]))
-        }
-    }()
+    var config Config
 
-    // Copy input from stdin to the pseudo-terminal
-    go func() {
-        buf := make([]byte, 1024)
-        for {
-            n, err := os.Stdin.Read(buf)
-            if err != nil {
-                fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", err)
-                break
-            }
-            if n > 0 {
-                _, err := ptmx.Write(buf[:n])
-                if err != nil {
-                    fmt.Fprintf(os.Stderr, "Failed to write to pseudo-terminal: %v\n", err)
-                    break
-                }
-            }
-        }
-    }()
+    json.Unmarshal(bytes, &config)
 
-    // Wait for the command to complete
-    if err := cmd.Wait(); err != nil {
-        fmt.Fprintf(os.Stderr, "Command exited with error: %v\n", err)
-    }
+	cmdIdx := 2
+
+	wg.Add(1)
+	go runCommand(config.Tools[cmdIdx].Cmd[0], config.Tools[cmdIdx].Cmd[0], config, cmdIdx)
+
+    // for _, tool := range config.Tools {
+    //     wg.Add(1)
+    //     go runCommand(tool.cmd[0], tool.cmd[0], config)
+    // }
+
+    // wg.Add(1)
+    // go runCommand("tcpconnect","tcpconnect", config)
+
+    // wg.Add(1)
+    // go runCommand("gethostlatency","gethostlatency", config)
+
+    // wg.Add(1)
+    // go runCommand("tcpconnlat", "tcpconnlat", config)
+
+    // wg.Add(1)
+    // go runCommand("tcplife", "tcplife", config, 3)
+
+    wg.Wait()
 }

@@ -5,12 +5,56 @@
         {
             "cmd": ["gethostlatency"],
             "output_description": "TIME      PID     COMM                  LATms HOST",
+            "output_type": "basic",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["bindsnoop"],
+            "output_description": "PID COMM         PROT ADDR            PORT   OPTS IF",
+            "output_type": "basic",
+            "noise": ["Tracing binds ... Hit Ctrl-C to end"],
+            "additional": []
+        },
+        {
+            "cmd": ["netqtop", "-n", "wlp0s20f3", "-i", "5", "-t"],
+            "output_description": "QueueID    avg_size   [0, 64)    [64, 512)  [512, 2K)  [2K, 16K)  [16K, 64K) BPS        PPS",
+            "output_type": "specific",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["sofdsnoop"],
+            "output_description": "ACTION TID    COMM             SOCKET                    FD    NAME",
+            "output_type": "specific",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["solisten", "--show-netns"],
+            "output_description": "PID    COMM         NETNS        PROTO  BACKLOG  ADDR                                    PORT",
+            "output_type": "basic",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["sslsniff"],
+            "output_description": "FUNC         TIME(s)            COMM             PID    LEN",
+            "output_type": "basic",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["tcpaccept"],
+            "output_description": "PID    COMM         IP RADDR            RPORT  LADDR            LPORT",
+            "output_type": "basic",
             "noise": [],
             "additional": []
         },
         {
             "cmd": ["tcpconnect"],
-            "output_description": "PID     COMM         IP SADDR            DADDR            DPORT ",
+            "output_description": "PID     COMM         IP SADDR            DADDR            DPORT",
+            "output_type": "basic",
             "noise": [
                 "Tracing connect ... Hit Ctrl-C to end"
             ],
@@ -19,18 +63,77 @@
         {
             "cmd": ["tcpconnlat"],
             "output_description": "PID     COMM         IP SADDR            DADDR            DPORT LAT(ms)",
+            "output_type": "basic",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["tcpdrop"],
+            "output_description": "TIME     PID    IP SADDR:SPORT          > DADDR:DPORT          STATE (FLAGS)",
+            "output_type": "specific",
             "noise": [],
             "additional": []
         },
         {
             "cmd": ["tcplife"],
             "output_description": "PID   COMM       LADDR           LPORT RADDR           RPORT TX_KB RX_KB MS",
+            "output_type": "basic",
             "noise": [],
             "additional": []
         },
         {
-            "cmd": ["netqtop", "-n", "wlp0s20f3", "-i", "5", "-t"],
-            "output_description": " QueueID    avg_size   [0, 64)    [64, 512)  [512, 2K)  [2K, 16K)  [16K, 64K) BPS        PPS        ",
+            "cmd": ["tcpretrans"],
+            "output_description": "TIME     PID    IP LADDR:LPORT          T> RADDR:RPORT          STATE",
+            "output_type": "basic",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["tcprtt", "-i 10"],
+            "output_description": "msecs               : count     distribution",
+            "output_type": "specific",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["tcpstates"],
+            "output_description": "SKADDR           C-PID C-COMM     LADDR           LPORT RADDR           RPORT OLDSTATE    -> NEWSTATE    MS",
+            "output_type": "basic",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["tcpsubnet"],
+            "output_description": "Subnet",
+            "output_type": "specific",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["tcpsynbl"],
+            "output_description": "Backlog",
+            "output_type": "specific",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["tcptop"],
+            "output_description": "PID    COMM         LADDR                 RADDR                  RX_KB  TX_KB",
+            "output_type": "basic",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["tcptracer"],
+            "output_description": "T  PID    COMM             IP SADDR            DADDR            SPORT  DPORT",
+            "output_type": "basic",
+            "noise": [],
+            "additional": []
+        },
+        {
+            "cmd": ["tcpcong"],
+            "output_description": "LAddrPort            RAddrPort             Open_ms Dod_ms Rcov_ms Cwr_ms  Los_ms Chgs",
+            "output_type": "basic",
             "noise": [],
             "additional": []
         }
