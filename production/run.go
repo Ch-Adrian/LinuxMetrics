@@ -38,6 +38,16 @@ type Config struct {
 
 var wg = sync.WaitGroup{}
 
+func filterNonEmptyAndConvert(output []string, test func(string) bool) (ret []string) {
+    for _, line := range output {
+		text := strings.Trim(line, " \t\n\r\f\v")
+        if test(text) {
+            ret = append(ret, text)
+        }
+    }
+    return
+}
+
 func prepareParameters(tool string, config Config, cmdIdx int) (*exec.Cmd, *os.File, *os.File, int, *kafka.Writer, *term.State) {
 	command := "sudo python "+config.Path+strings.Join(config.Tools[cmdIdx].Cmd[0:], " ")
 
@@ -145,14 +155,11 @@ func writeStdOut(ptmx *os.File, config Config, cmdIdx int, amtOfColumns int, w *
 		lines, err := readFromPTY(buf, ptmx)
 		if err != nil { return }
 
-		for _, line := range lines {
+		for _, line := range filterNonEmptyAndConvert(lines, func(s string) bool { return s != "" }) {
 
-			text := strings.Trim(line, " \t\n\r\f\v")
-			if text == "" { continue }
+			fmt.Fprintf(os.Stdout, "%s\n\r", line)
 
-			fmt.Fprintf(os.Stdout, "%s\n\r", text)
-
-			output, filterErr := filterForMessageToKafka(text, config, cmdIdx, amtOfColumns)
+			output, filterErr := filterForMessageToKafka(line, config, cmdIdx, amtOfColumns)
 			if filterErr != nil { continue }
 
 			sendToKafka(output, w)
