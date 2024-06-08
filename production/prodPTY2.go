@@ -10,12 +10,13 @@ import (
     "github.com/segmentio/kafka-go"
     "context"
     "time"
-    "log"
     "sync"
     // "os"
     "io/ioutil"
     "encoding/json"
 	"strings"
+	// "reflect"
+	"errors"
 )
 
 const output_type_basic = "basic"
@@ -37,139 +38,176 @@ type Config struct {
 
 var wg = sync.WaitGroup{}
 
-func runCommand(tool string, topic string, config Config, cmdIdx int){
-	defer wg.Done()
+func prepareParameters(tool string, config Config, cmdIdx int) (*exec.Cmd, *os.File, *os.File, int, *kafka.Writer, *term.State) {
+	command := "sudo python "+config.Path+strings.Join(config.Tools[cmdIdx].Cmd[0:], " ")
 
-	command := "sudo python /usr/share/bcc/tools/"+tool
-	if len(config.Tools[cmdIdx].Cmd) != 1 {
-		command = "sudo python /usr/share/bcc/tools/"+tool+" "+strings.Join(config.Tools[cmdIdx].Cmd[1:], " ")
-	}
 	amtOfColumns := len(strings.Fields(config.Tools[cmdIdx].Output_description))
 	fmt.Println("Running command: ", command, " and ", amtOfColumns)
 
-	cmd := exec.Command("bash", "-c",command)
+	cmd := exec.Command("bash", "-c", command)
 
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create stderr pipe: %v\n", err)
-		return
+		return nil, nil, nil, 0, nil, nil
 	}
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start command: %v\n", err)
-		return
+		return nil, nil, nil, 0, nil, nil
 	}
-	defer ptmx.Close()
 
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to set terminal to raw mode: %v\n", err)
-		return
+		return nil, nil, nil, 0, nil, nil
 	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
 	w := &kafka.Writer{
 		Addr:     kafka.TCP(config.Kafka_address),
-		Topic:    topic,
+		Topic:    tool,
 		Balancer: &kafka.LeastBytes{},
 	}
 
-	go func() {
-		buf := make([]byte, 1024)
-		for {
-			n, err := ptmx.Read(buf)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to read from pseudo-terminal: %v\n\r", err)
-				break
-			}
-			output := string(buf[:n])
-			output2 := strings.Split(output, "\n")
-			for _, line := range output2 {
+	stderrPipeAsOsFile, ok := stderrPipe.(*os.File)
+	if ok {
+		return cmd, ptmx, stderrPipeAsOsFile, amtOfColumns, w, oldState
+	}
+	return nil, nil, nil, 0, nil, nil
+}
 
-				text := strings.Trim(line, " \t\n\r\f\v")
-				if text == "" {
-					continue
-				}
+func readFromPTY(buf []byte, ptmx *os.File) ([]string, error) {
+	n, err := ptmx.Read(buf)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read from pseudo-terminal: %v\n\r", err)
+		return nil, errors.New("Failed to read from pseudo-terminal")
+	}
+	output := string(buf[:n])
+	output2 := strings.Split(output, "\n")
+	return output2, nil
+}
 
-				fmt.Fprintf(os.Stdout, "%s\n\r", text)
+func filterForMessageToKafka(text string, config Config, cmdIdx int, amtOfColumns int) (string, error) {
+	
+	if text == config.Tools[cmdIdx].Output_description {
+		fmt.Fprintf(os.Stdout, "Skipping header\n\r")
+		return "", errors.New("Skipping header")
+	}
 
-				if text == config.Tools[cmdIdx].Output_description {
-					fmt.Fprintf(os.Stdout, "Skipping header\n\r")
-					continue
-				}
-
-				if len(config.Tools[cmdIdx].Noise) != 0 {
-					cont := false
-					for _, noise := range config.Tools[cmdIdx].Noise {
-						if text == noise {
-							fmt.Fprintf(os.Stdout, "Skipping noise\n\r")
-							cont = true
-							break;
-						}
-					}
-					if cont {
-						continue
-					}
-				}
-
-				fields := strings.Fields(text)
-				fmt.Fprintf(os.Stdout, "field[0]: %s\n\r", fields[0])
-				if fields[0] == "[sudo]"{
-					continue
-				}
-
-				if config.Tools[cmdIdx].Output_type == output_type_basic {
-					amtOfColumnsInText := len(fields)
-					fmt.Fprintf(os.Stdout, "amtOfColumnsInText: %d\n\r", amtOfColumnsInText)
-					if amtOfColumns != amtOfColumnsInText {
-						continue
-					}
-				}
-
-				dt := time.Now().Format("2006-01-02 15:04:05")
-
-				err2 := w.WriteMessages(context.Background(),
-					kafka.Message{
-						Key:   []byte(dt),
-						Value: []byte(text),
-					},
-				)
-
-				if err2 != nil {
-					log.Fatal("failed to write messages:", err2)
-				}
+	if len(config.Tools[cmdIdx].Noise) != 0 {
+		cont := false
+		for _, noise := range config.Tools[cmdIdx].Noise {
+			if text == noise {
+				fmt.Fprintf(os.Stdout, "Skipping noise\n\r")
+				cont = true
+				break;
 			}
 		}
+		if cont {
+			return "", errors.New("Skipping noise")
+		}
+	}
+
+	fields := strings.Fields(text)
+	fmt.Fprintf(os.Stdout, "field[0]: %s\n\r", fields[0])
+	if fields[0] == "[sudo]"{
+		return "", errors.New("Skipping sudo")
+	}
+
+	if config.Tools[cmdIdx].Output_type == output_type_basic {
+		amtOfColumnsInText := len(fields)
+		fmt.Fprintf(os.Stdout, "amtOfColumnsInText: %d\n\r", amtOfColumnsInText)
+		if amtOfColumns != amtOfColumnsInText {
+			return "", errors.New("Skipping different amount of columns")
+		}
+	}
+	return text, nil
+}
+
+func sendToKafka(output string, w *kafka.Writer){
+	dt := time.Now().Format("2006-01-02 15:04:05")
+
+	if 	err := w.WriteMessages(context.Background(),
+			kafka.Message{
+				Key:   []byte(dt),
+				Value: []byte(output),
+			},
+		); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write messages: %v\n\r", err)
+	}
+}
+
+func writeStdOut(ptmx *os.File, config Config, cmdIdx int, amtOfColumns int, w *kafka.Writer){
+	buf := make([]byte, 1024)
+
+	for {
+		lines, err := readFromPTY(buf, ptmx)
+		if err != nil { return }
+
+		for _, line := range lines {
+
+			text := strings.Trim(line, " \t\n\r\f\v")
+			if text == "" { continue }
+
+			fmt.Fprintf(os.Stdout, "%s\n\r", text)
+
+			output, filterErr := filterForMessageToKafka(text, config, cmdIdx, amtOfColumns)
+			if filterErr != nil { continue }
+
+			sendToKafka(output, w)
+
+		}
+	}
+}
+
+func printErrors(stderrPipe *os.File){
+	scanner := bufio.NewScanner(stderrPipe)
+	for scanner.Scan() {
+		line := scanner.Text()
+		fmt.Fprintf(os.Stderr, "stderr: %s\n\r", line)
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading from stderr: %v\n\r", err)
+	}
+}
+
+func readStdIn(ptmx *os.File){
+	buf := make([]byte, 1024)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", err)
+			return
+		}
+		if n > 0 {
+			_, err := ptmx.Write(buf[:n])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to write to pseudo-terminal: %v\n", err)
+				return
+			}
+		}
+	}
+}
+
+func runCommand(tool string, config Config, cmdIdx int){
+	defer wg.Done()
+
+	cmd, ptmx, stderrPipe, amtOfColumns, w, oldState := prepareParameters(tool, config, cmdIdx)
+	defer ptmx.Close()
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+	if cmd == nil { return }
+
+	go func() {
+		writeStdOut(ptmx, config, cmdIdx, amtOfColumns, w)
 	}()
 
 	go func() {
-		scanner := bufio.NewScanner(stderrPipe)
-		for scanner.Scan() {
-			line := scanner.Text()
-			fmt.Fprintf(os.Stderr, "stderr: %s\n\r", line)
-		}
-		if err := scanner.Err(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading from stderr: %v\n\r", err)
-		}
+		printErrors(stderrPipe)
 	}()
 
 	go func() {
-		buf := make([]byte, 1024)
-		for {
-			n, err := os.Stdin.Read(buf)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", err)
-				break
-			}
-			if n > 0 {
-				_, err := ptmx.Write(buf[:n])
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to write to pseudo-terminal: %v\n", err)
-					break
-				}
-			}
-		}
+		readStdIn(ptmx)
 	}()
 
 	if err := cmd.Wait(); err != nil {
@@ -191,10 +229,14 @@ func main() {
 
     json.Unmarshal(bytes, &config)
 
-	cmdIdx := 17
-
+	cmdIdx := 0
 	wg.Add(1)
-	go runCommand(config.Tools[cmdIdx].Cmd[0], config.Tools[cmdIdx].Cmd[0], config, cmdIdx)
+	go runCommand(config.Tools[cmdIdx].Cmd[0], config, cmdIdx)
+
+	// for cmdIdx, tool := range config.Tools {
+		// wg.Add(1)
+		// go runCommand(config.Tools[cmdIdx].Cmd[0], config, cmdIdx)
+	// }
 
     wg.Wait()
 }
