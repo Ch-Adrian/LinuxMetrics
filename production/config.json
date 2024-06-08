@@ -32,21 +32,21 @@
         },
         {
             "cmd": ["solisten", "--show-netns"],
-            "output_description": "PID    COMM         NETNS        PROTO  BACKLOG  ADDR                                    PORT",
+            "output_description": "PID     COMM         NETNS        PROTO  BACKLOG  PORT  ADDR",
             "output_type": "basic",
             "noise": [],
             "additional": []
         },
         {
             "cmd": ["sslsniff"],
-            "output_description": "FUNC         TIME(s)            COMM             PID    LEN",
-            "output_type": "basic",
+            "output_description": "FUNC         TIME(s)            COMM             PID     LEN",
+            "output_type": "specific",
             "noise": [],
             "additional": []
         },
         {
             "cmd": ["tcpaccept"],
-            "output_description": "PID    COMM         IP RADDR            RPORT  LADDR            LPORT",
+            "output_description": "PID     COMM         IP RADDR            RPORT LADDR            LPORT",
             "output_type": "basic",
             "noise": [],
             "additional": []
@@ -69,9 +69,9 @@
         },
         {
             "cmd": ["tcpdrop"],
-            "output_description": "TIME     PID    IP SADDR:SPORT          > DADDR:DPORT          STATE (FLAGS)",
+            "output_description": "TIME     PID     IP SADDR:SPORT          > DADDR:DPORT          STATE (FLAGS)",
             "output_type": "specific",
-            "noise": [],
+            "noise": ["WARNING: tcp_drop() kernel function not found or traceable. Use tracpoint:skb:kfree_skb instead."],
             "additional": []
         },
         {
@@ -106,14 +106,14 @@
             "cmd": ["tcpsubnet"],
             "output_description": "Subnet",
             "output_type": "specific",
-            "noise": [],
+            "noise": ["Tracing... Output every 1 secs. Hit Ctrl-C to end"],
             "additional": []
         },
         {
             "cmd": ["tcpsynbl"],
             "output_description": "Backlog",
             "output_type": "specific",
-            "noise": [],
+            "noise": ["Tracing SYN backlog size. Ctrl-C to end."],
             "additional": []
         },
         {

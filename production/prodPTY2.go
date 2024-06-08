@@ -99,9 +99,18 @@ func runCommand(tool string, topic string, config Config, cmdIdx int){
 					continue
 				}
 
-				if len(config.Tools[cmdIdx].Noise) != 0 && text == config.Tools[cmdIdx].Noise[0] {
-					fmt.Fprintf(os.Stdout, "Skipping noise\n\r")
-					continue 
+				if len(config.Tools[cmdIdx].Noise) != 0 {
+					cont := false
+					for _, noise := range config.Tools[cmdIdx].Noise {
+						if text == noise {
+							fmt.Fprintf(os.Stdout, "Skipping noise\n\r")
+							cont = true
+							break;
+						}
+					}
+					if cont {
+						continue
+					}
 				}
 
 				fields := strings.Fields(text)
@@ -182,27 +191,10 @@ func main() {
 
     json.Unmarshal(bytes, &config)
 
-	cmdIdx := 2
+	cmdIdx := 17
 
 	wg.Add(1)
 	go runCommand(config.Tools[cmdIdx].Cmd[0], config.Tools[cmdIdx].Cmd[0], config, cmdIdx)
-
-    // for _, tool := range config.Tools {
-    //     wg.Add(1)
-    //     go runCommand(tool.cmd[0], tool.cmd[0], config)
-    // }
-
-    // wg.Add(1)
-    // go runCommand("tcpconnect","tcpconnect", config)
-
-    // wg.Add(1)
-    // go runCommand("gethostlatency","gethostlatency", config)
-
-    // wg.Add(1)
-    // go runCommand("tcpconnlat", "tcpconnlat", config)
-
-    // wg.Add(1)
-    // go runCommand("tcplife", "tcplife", config, 3)
 
     wg.Wait()
 }
