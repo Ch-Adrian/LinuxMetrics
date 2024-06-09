@@ -11,11 +11,9 @@ import (
     "context"
     "time"
     "sync"
-    // "os"
     "io/ioutil"
     "encoding/json"
 	"strings"
-	// "reflect"
 	"errors"
 )
 
@@ -32,11 +30,14 @@ type Tool struct {
 
 type Config struct {
     Kafka_address string `json:"kafka_address"`
+	Kafka_connected bool `json:"kafka_connected"`
     Path string `json:"path"`
     Tools []Tool `json:"tools"`
 }
 
 var wg = sync.WaitGroup{}
+
+var terminals = []*os.File{}
 
 func filterNonEmptyAndConvert(output []string, test func(string) bool) (ret []string) {
     for _, line := range output {
@@ -49,28 +50,28 @@ func filterNonEmptyAndConvert(output []string, test func(string) bool) (ret []st
 }
 
 func prepareParameters(tool string, config Config, cmdIdx int) (*exec.Cmd, *os.File, *os.File, int, *kafka.Writer, *term.State) {
-	command := "sudo python "+config.Path+strings.Join(config.Tools[cmdIdx].Cmd[0:], " ")
+	command := "python "+config.Path+strings.Join(config.Tools[cmdIdx].Cmd[0:], " ")
 
 	amtOfColumns := len(strings.Fields(config.Tools[cmdIdx].Output_description))
-	fmt.Println("Running command: ", command, " and ", amtOfColumns)
+	fmt.Fprintf(os.Stdout, "Running command: %s and %s\n\r", command, amtOfColumns)
 
 	cmd := exec.Command("bash", "-c", command)
 
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create stderr pipe: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to create stderr pipe: %v\n\r", err)
 		return nil, nil, nil, 0, nil, nil
 	}
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to start command: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to start command: %v\n\r", err)
 		return nil, nil, nil, 0, nil, nil
 	}
 
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to set terminal to raw mode: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to set terminal to raw mode: %v\n\r", err)
 		return nil, nil, nil, 0, nil, nil
 	}
 
@@ -120,10 +121,6 @@ func filterForMessageToKafka(text string, config Config, cmdIdx int, amtOfColumn
 	}
 
 	fields := strings.Fields(text)
-	fmt.Fprintf(os.Stdout, "field[0]: %s\n\r", fields[0])
-	if fields[0] == "[sudo]"{
-		return "", errors.New("Skipping sudo")
-	}
 
 	if config.Tools[cmdIdx].Output_type == output_type_basic {
 		amtOfColumnsInText := len(fields)
@@ -144,7 +141,7 @@ func sendToKafka(output string, w *kafka.Writer){
 				Value: []byte(output),
 			},
 		); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to write messages: %v\n\r", err)
+		fmt.Fprintf(os.Stderr, "Failed to write messages: %v\n\r", err)
 	}
 }
 
@@ -159,11 +156,12 @@ func writeStdOut(ptmx *os.File, config Config, cmdIdx int, amtOfColumns int, w *
 
 			fmt.Fprintf(os.Stdout, "%s\n\r", line)
 
-			output, filterErr := filterForMessageToKafka(line, config, cmdIdx, amtOfColumns)
-			if filterErr != nil { continue }
+			if config.Kafka_connected {
+				output, filterErr := filterForMessageToKafka(line, config, cmdIdx, amtOfColumns)
+				if filterErr != nil { continue }
 
-			sendToKafka(output, w)
-
+				sendToKafka(output, w)
+			}
 		}
 	}
 }
@@ -179,19 +177,21 @@ func printErrors(stderrPipe *os.File){
 	}
 }
 
-func readStdIn(ptmx *os.File){
+func readStdIn(){
 	buf := make([]byte, 1024)
 	for {
 		n, err := os.Stdin.Read(buf)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n\r", err)
 			return
 		}
 		if n > 0 {
-			_, err := ptmx.Write(buf[:n])
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to write to pseudo-terminal: %v\n", err)
-				return
+			for _, ptmx := range terminals {
+				_, err := ptmx.Write(buf[:n])
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to write to pseudo-terminal: %v\n\r", err)
+					return
+				}
 			}
 		}
 	}
@@ -205,17 +205,11 @@ func runCommand(tool string, config Config, cmdIdx int){
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 	if cmd == nil { return }
 
-	go func() {
-		writeStdOut(ptmx, config, cmdIdx, amtOfColumns, w)
-	}()
+	go writeStdOut(ptmx, config, cmdIdx, amtOfColumns, w)
 
-	go func() {
-		printErrors(stderrPipe)
-	}()
+	go printErrors(stderrPipe)
 
-	go func() {
-		readStdIn(ptmx)
-	}()
+	terminals = append(terminals, ptmx)
 
 	if err := cmd.Wait(); err != nil {
 		fmt.Fprintf(os.Stderr, "Command exited with error: %v\n\r", err)
@@ -227,6 +221,7 @@ func main() {
     jsonFile, err := os.Open("config.json")
     if err != nil {
         fmt.Println(err)
+		return
     }
     defer jsonFile.Close()
 
@@ -236,13 +231,23 @@ func main() {
 
     json.Unmarshal(bytes, &config)
 
-	cmdIdx := 0
-	wg.Add(1)
-	go runCommand(config.Tools[cmdIdx].Cmd[0], config, cmdIdx)
+	commandsForTest := [...]int{0, 3, 6, 7, 8, 10, 13}
+
+	for _, cmdIdx := range commandsForTest {
+		fmt.Fprintf(os.Stdout, "cmdIdx: %d cmd: %s\n\r", cmdIdx, config.Tools[cmdIdx].Cmd[0])
+		wg.Add(1)
+		go runCommand(config.Tools[cmdIdx].Cmd[0], config, cmdIdx)
+	}
+
+	go readStdIn()
+
+	// cmdIdx := 0
+	// wg.Add(1)
+	// go runCommand(config.Tools[cmdIdx].Cmd[0], config, cmdIdx)
 
 	// for cmdIdx, tool := range config.Tools {
-		// wg.Add(1)
-		// go runCommand(config.Tools[cmdIdx].Cmd[0], config, cmdIdx)
+	// 	wg.Add(1)
+	// 	go runCommand(tool.Cmd[0], config, cmdIdx)
 	// }
 
     wg.Wait()
