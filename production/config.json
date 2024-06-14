@@ -1,5 +1,4 @@
 {
-    "kafka_address": "localhost:29092",
     "kafka_connected": false,
     "path": "/usr/share/bcc/tools/",
     "tools": [
