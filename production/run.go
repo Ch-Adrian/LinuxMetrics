@@ -51,14 +51,14 @@ func filterNonEmptyAndConvert(output []string, test func(string) bool) (ret []st
 }
 
 func prepareParameters(tool string, config Config, cmdIdx int) (*exec.Cmd, *os.File, *os.File, int, *kafka.Writer, *term.State) {
-	command := "python " + config.Path + strings.Join(config.Tools[cmdIdx].Cmd[0:], " ")
+	command := config.Path + strings.Join(config.Tools[cmdIdx].Cmd[0:], " ")
 	kafkaAddress := os.Getenv("KAFKA_ADDRESS")
 	instanceId := os.Getenv("EC2_INSTANCE_ID")
 
 	amtOfColumns := len(strings.Fields(config.Tools[cmdIdx].OutputDescription))
-	fmt.Fprintf(os.Stdout, "Running command: %s and %s\n\r", command, amtOfColumns)
+	log.Printf("Running command: %s and %s\n\r", command, amtOfColumns)
 
-	cmd := exec.Command("bash", "-c", command)
+	cmd := exec.Command("python3", command)
 
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
@@ -106,7 +106,7 @@ func readFromPTY(buf []byte, ptmx *os.File) ([]string, error) {
 func filterForMessageToKafka(text string, config Config, cmdIdx int, amtOfColumns int) (string, error) {
 
 	if text == config.Tools[cmdIdx].OutputDescription {
-		fmt.Fprintf(os.Stdout, "Skipping header\n\r")
+		log.Printf("Skipping header\n\r")
 		return "", errors.New("Skipping header")
 	}
 
@@ -114,7 +114,7 @@ func filterForMessageToKafka(text string, config Config, cmdIdx int, amtOfColumn
 		cont := false
 		for _, noise := range config.Tools[cmdIdx].Noise {
 			if text == noise {
-				fmt.Fprintf(os.Stdout, "Skipping noise\n\r")
+				log.Printf("Skipping noise\n\r")
 				cont = true
 				break
 			}
@@ -128,7 +128,7 @@ func filterForMessageToKafka(text string, config Config, cmdIdx int, amtOfColumn
 
 	if config.Tools[cmdIdx].OutputType == output_type_basic {
 		amtOfColumnsInText := len(fields)
-		fmt.Fprintf(os.Stdout, "amtOfColumnsInText: %d\n\r", amtOfColumnsInText)
+		log.Printf("amtOfColumnsInText: %d\n\r", amtOfColumnsInText)
 		if amtOfColumns != amtOfColumnsInText {
 			return "", errors.New("Skipping different amount of columns")
 		}
@@ -250,10 +250,14 @@ func main() {
 		log.Fatal("Cannot set ec2 instance id")
 	}
 
+	if args[2] == "" {
+		log.Fatal("Path to config not provided")
+	}
+
 	log.Printf("Connecting to kafka on address: %s", os.Getenv("KAFKA_ADDRESS"))
 	log.Printf("Instance-id: %s", os.Getenv("EC2_INSTANCE_ID"))
 
-	jsonFile, err := os.Open("config.json")
+	jsonFile, err := os.Open(args[2])
 	if err != nil {
 		fmt.Println(err)
 		return
