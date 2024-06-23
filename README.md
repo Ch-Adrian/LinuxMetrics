@@ -30,8 +30,8 @@ related with traffic and networks in considered linux instance. included metrics
 ## Requirements:
 Installed Go compiler to compile solution.\
 Installed bcc for program runtime.\
-    - on AWS: https://repost.aws/knowledge-center/ec2-linux-tools-performance-bottlenecks?\
-    - locally: https://github.com/iovisor/bcc/blob/master/INSTALL.md\
+    - on AWS: https://repost.aws/knowledge-center/ec2-linux-tools-performance-bottlenecks? \
+    - locally: https://github.com/iovisor/bcc/blob/master/INSTALL.md
 
 ## Setup:
 Consider only production directory.\

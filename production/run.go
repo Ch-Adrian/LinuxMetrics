@@ -51,14 +51,17 @@ func filterNonEmptyAndConvert(output []string, test func(string) bool) (ret []st
 }
 
 func prepareParameters(tool string, config Config, cmdIdx int) (*exec.Cmd, *os.File, *os.File, int, *kafka.Writer, *term.State) {
-	command := config.Path + strings.Join(config.Tools[cmdIdx].Cmd[0:], " ")
+	command := config.Path + config.Tools[cmdIdx].Cmd[0]
+	var args []string = config.Tools[cmdIdx].Cmd[0:]
+	args[0] = command
+
 	kafkaAddress := os.Getenv("KAFKA_ADDRESS")
 	instanceId := os.Getenv("EC2_INSTANCE_ID")
 
 	amtOfColumns := len(strings.Fields(config.Tools[cmdIdx].OutputDescription))
 	log.Printf("Running command: %s and %s\n\r", command, amtOfColumns)
 
-	cmd := exec.Command("python3", command)
+	cmd := exec.Command("python3", args...)
 
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
@@ -270,9 +273,9 @@ func main() {
 
 	json.Unmarshal(bytes, &config)
 
-	commandsForTest := [...]int{0, 3, 6, 7, 8, 10, 13}
+	// commandsForTest := [...]int{0, 3, 6, 7, 8, 10, 13}
 
-	for _, cmdIdx := range commandsForTest {
+	for cmdIdx, _ := range config.Tools {
 		log.Printf("cmdIdx: %d cmd: %s\n\r", cmdIdx, config.Tools[cmdIdx].Cmd[0])
 		wg.Add(1)
 		go runCommand(config.Tools[cmdIdx].Cmd[0], config, cmdIdx)
