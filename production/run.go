@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"github.com/creack/pty"
 	"github.com/segmentio/kafka-go"
-	"golang.org/x/term"
 	"io"
 	"io/ioutil"
 	"log"
@@ -50,7 +49,7 @@ func filterNonEmptyAndConvert(output []string, test func(string) bool) (ret []st
 	return
 }
 
-func prepareParameters(tool string, config Config, cmdIdx int) (*exec.Cmd, *os.File, *os.File, int, *kafka.Writer, *term.State) {
+func prepareParameters(tool string, config Config, cmdIdx int) (*exec.Cmd, *os.File, *os.File, int, *kafka.Writer) {
 	command := config.Path + config.Tools[cmdIdx].Cmd[0]
 	var args []string = config.Tools[cmdIdx].Cmd[0:]
 	args[0] = command
@@ -66,19 +65,13 @@ func prepareParameters(tool string, config Config, cmdIdx int) (*exec.Cmd, *os.F
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
 		log.Printf("Failed to create stderr pipe: %v\n\r", err)
-		return nil, nil, nil, 0, nil, nil
+		return nil, nil, nil, 0, nil
 	}
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		log.Printf("Failed to start command: %v\n\r", err)
-		return nil, nil, nil, 0, nil, nil
-	}
-
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		log.Printf("Failed to set terminal to raw mode: %v\n\r", err)
-		return nil, nil, nil, 0, nil, nil
+		return nil, nil, nil, 0, nil
 	}
 
 	w := &kafka.Writer{
@@ -90,9 +83,9 @@ func prepareParameters(tool string, config Config, cmdIdx int) (*exec.Cmd, *os.F
 
 	stderrPipeAsOsFile, ok := stderrPipe.(*os.File)
 	if ok {
-		return cmd, ptmx, stderrPipeAsOsFile, amtOfColumns, w, oldState
+		return cmd, ptmx, stderrPipeAsOsFile, amtOfColumns, w
 	}
-	return nil, nil, nil, 0, nil, nil
+	return nil, nil, nil, 0, nil
 }
 
 func readFromPTY(buf []byte, ptmx *os.File) ([]string, error) {
@@ -212,9 +205,8 @@ func readStdIn() {
 func runCommand(tool string, config Config, cmdIdx int) {
 	defer wg.Done()
 
-	cmd, ptmx, stderrPipe, amtOfColumns, writer, oldState := prepareParameters(tool, config, cmdIdx)
+	cmd, ptmx, stderrPipe, amtOfColumns, writer := prepareParameters(tool, config, cmdIdx)
 	defer ptmx.Close()
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
 	if cmd == nil {
 		return
 	}
